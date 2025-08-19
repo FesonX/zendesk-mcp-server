@@ -25,7 +25,8 @@ load_dotenv()
 zendesk_client = ZendeskClient(
     subdomain=os.getenv("ZENDESK_SUBDOMAIN"),
     email=os.getenv("ZENDESK_EMAIL"),
-    token=os.getenv("ZENDESK_API_KEY")
+    token=os.getenv("ZENDESK_API_KEY"),
+    timeout=30
 )
 
 server = Server("Zendesk Server")
@@ -44,12 +45,15 @@ Remember to be professional and focus on actionable insights.
 COMMENT_DRAFT_TEMPLATE = """
 You are a helpful Zendesk support agent. You need to draft a response to ticket #{ticket_id}.
 
-Please fetch the ticket info, comments and knowledge base to draft a professional and helpful response that:
-1. Acknowledges the customer's concern
-2. Addresses the specific issues raised
-3. Provides clear next steps or ask for specific details need to proceed
-4. Maintains a friendly and professional tone
-5. Ask for confirmation before commenting on the ticket
+Please:
+1. Fetch the ticket info and comments to understand the issue
+2. Search the knowledge base for relevant articles using the search_kb_articles tool
+3. Draft a professional and helpful response that:
+   - Acknowledges the customer's concern
+   - Addresses the specific issues raised
+   - Provides clear next steps or ask for specific details need to proceed
+   - Maintains a friendly and professional tone
+4. Ask for confirmation before commenting on the ticket
 
 The response should be formatted well and ready to be posted as a comment.
 """
@@ -176,6 +180,66 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["ticket_id", "comment"]
             }
+        ),
+        types.Tool(
+            name="search_kb_articles",
+            description="Search Zendesk Help Center articles by query",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query to find relevant articles"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of articles to return",
+                        "default": 10
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
+        types.Tool(
+            name="get_kb_article",
+            description="Get a specific Zendesk Help Center article by ID",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "article_id": {
+                        "type": "integer",
+                        "description": "The ID of the article to retrieve"
+                    }
+                },
+                "required": ["article_id"]
+            }
+        ),
+        types.Tool(
+            name="list_kb_sections",
+            description="List all Zendesk Help Center sections",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
+        ),
+        types.Tool(
+            name="get_section_articles",
+            description="Get articles from a specific Zendesk Help Center section",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "section_id": {
+                        "type": "integer",
+                        "description": "The ID of the section"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of articles to return",
+                        "default": 20
+                    }
+                },
+                "required": ["section_id"]
+            }
         )
     ]
 
@@ -217,6 +281,40 @@ async def handle_call_tool(
                 text=f"Comment created successfully: {result}"
             )]
 
+        elif name == "search_kb_articles":
+            articles = zendesk_client.search_articles(
+                query=arguments["query"],
+                limit=arguments.get("limit", 10)
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(articles, indent=2)
+            )]
+
+        elif name == "get_kb_article":
+            article = zendesk_client.get_article(arguments["article_id"])
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(article, indent=2)
+            )]
+
+        elif name == "list_kb_sections":
+            sections = zendesk_client.list_sections()
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(sections, indent=2)
+            )]
+
+        elif name == "get_section_articles":
+            articles = zendesk_client.get_section_articles(
+                section_id=arguments["section_id"],
+                limit=arguments.get("limit", 20)
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(articles, indent=2)
+            )]
+
         else:
             raise ValueError(f"Unknown tool: {name}")
 
@@ -240,9 +338,22 @@ async def handle_list_resources() -> list[types.Resource]:
     ]
 
 
+@ttl_cache(ttl=7200)
+def get_cached_sections():
+    """Cache section list for 2 hours"""
+    return zendesk_client.list_sections()
+
+
 @ttl_cache(ttl=3600)
-def get_cached_kb():
-    return zendesk_client.get_all_articles()
+def get_cached_article(article_id: int):
+    """Cache individual articles for 1 hour"""
+    return zendesk_client.get_article(article_id)
+
+
+@ttl_cache(ttl=900)
+def search_cached_articles(query: str, limit: int = 10):
+    """Cache search results for 15 minutes"""
+    return zendesk_client.search_articles(query, limit)
 
 
 @server.read_resource()
@@ -258,16 +369,17 @@ async def handle_read_resource(uri: AnyUrl) -> str:
         raise ValueError(f"Unknown resource path: {path}")
 
     try:
-        kb_data = get_cached_kb()
+        # Return lightweight metadata only
+        sections = get_cached_sections()
         return json.dumps({
-            "knowledge_base": kb_data,
             "metadata": {
-                "sections": len(kb_data),
-                "total_articles": sum(len(section['articles']) for section in kb_data.values()),
+                "total_sections": len(sections),
+                "sections": sections,
+                "note": "Use the search_kb_articles tool to find specific articles"
             }
         }, indent=2)
     except Exception as e:
-        logger.error(f"Error fetching knowledge base: {e}")
+        logger.error(f"Error fetching knowledge base metadata: {e}")
         raise
 
 

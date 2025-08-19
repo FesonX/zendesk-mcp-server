@@ -1,18 +1,22 @@
 from typing import Dict, Any, List
+import logging
 
 from zenpy import Zenpy
 from zenpy.lib.api_objects import Comment
 
+logger = logging.getLogger(__name__)
+
 
 class ZendeskClient:
-    def __init__(self, subdomain: str, email: str, token: str):
+    def __init__(self, subdomain: str, email: str, token: str, timeout: int = 30):
         """
         Initialize the Zendesk client using zenpy lib.
         """
         self.client = Zenpy(
             subdomain=subdomain,
             email=email,
-            token=token
+            token=token,
+            timeout=timeout
         )
 
     def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
@@ -68,31 +72,88 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to post comment on ticket {ticket_id}: {str(e)}")
 
-    def get_all_articles(self) -> Dict[str, Any]:
+    def search_articles(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
         """
-        Fetch help center articles as knowledge base.
-        Returns a Dict of section -> [article].
+        Search help center articles by query.
         """
         try:
-            # Get all sections
-            sections = self.client.help_center.sections()
-
-            # Get articles for each section
-            kb = {}
-            for section in sections:
-                articles = self.client.help_center.sections.articles(section.id)
-                kb[section.name] = {
-                    'section_id': section.id,
-                    'description': section.description,
-                    'articles': [{
-                        'id': article.id,
-                        'title': article.title,
-                        'body': article.body,
-                        'updated_at': str(article.updated_at),
-                        'url': article.html_url
-                    } for article in articles]
-                }
-
-            return kb
+            results = self.client.help_center.articles.search(query=query)
+            articles = []
+            for i, article in enumerate(results):
+                if i >= limit:
+                    break
+                articles.append({
+                    'id': article.id,
+                    'title': article.title,
+                    'body': article.body[:1000] if len(article.body) > 1000 else article.body,
+                    'section_id': article.section_id,
+                    'updated_at': str(article.updated_at),
+                    'url': article.html_url
+                })
+            logger.info(f"Found {len(articles)} articles for query: {query}")
+            return articles
         except Exception as e:
-            raise Exception(f"Failed to fetch knowledge base: {str(e)}")
+            logger.error(f"Failed to search articles: {str(e)}")
+            raise Exception(f"Failed to search articles: {str(e)}")
+
+    def get_article(self, article_id: int) -> Dict[str, Any]:
+        """
+        Get a specific help center article by ID.
+        """
+        try:
+            article = self.client.help_center.articles(id=article_id)
+            return {
+                'id': article.id,
+                'title': article.title,
+                'body': article.body,
+                'section_id': article.section_id,
+                'author_id': article.author_id,
+                'updated_at': str(article.updated_at),
+                'url': article.html_url,
+                'vote_sum': article.vote_sum,
+                'vote_count': article.vote_count
+            }
+        except Exception as e:
+            logger.error(f"Failed to get article {article_id}: {str(e)}")
+            raise Exception(f"Failed to get article {article_id}: {str(e)}")
+
+    def list_sections(self) -> List[Dict[str, Any]]:
+        """
+        List all help center sections (lightweight, no articles).
+        """
+        try:
+            sections = self.client.help_center.sections()
+            return [{
+                'id': section.id,
+                'name': section.name,
+                'description': section.description,
+                'category_id': section.category_id,
+                'position': section.position,
+                'updated_at': str(section.updated_at)
+            } for section in sections]
+        except Exception as e:
+            logger.error(f"Failed to list sections: {str(e)}")
+            raise Exception(f"Failed to list sections: {str(e)}")
+
+    def get_section_articles(self, section_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Get articles for a specific section.
+        """
+        try:
+            articles = self.client.help_center.sections.articles(section_id=section_id)
+            result = []
+            for i, article in enumerate(articles):
+                if i >= limit:
+                    break
+                result.append({
+                    'id': article.id,
+                    'title': article.title,
+                    'body': article.body[:1000] if len(article.body) > 1000 else article.body,
+                    'updated_at': str(article.updated_at),
+                    'url': article.html_url
+                })
+            logger.info(f"Found {len(result)} articles in section {section_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get section articles: {str(e)}")
+            raise Exception(f"Failed to get section articles: {str(e)}")

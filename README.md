@@ -9,7 +9,8 @@ This server provides a comprehensive integration with Zendesk. It offers:
 
 - Tools for retrieving and managing Zendesk tickets and comments
 - Specialized prompts for ticket analysis and response drafting
-- Full access to the Zendesk Help Center articles as knowledge base
+- Intelligent search-based access to Zendesk Help Center articles
+- Efficient knowledge base tools with caching and pagination
 
 ![demo](https://res.cloudinary.com/leecy-me/image/upload/v1736410626/open/zendesk_yunczu.gif)
 
@@ -37,7 +38,7 @@ This server provides a comprehensive integration with Zendesk. It offers:
 
 ## Resources
 
-- zendesk://knowledge-base, get access to the whole help center articles.
+- zendesk://knowledge-base - Returns metadata about the help center (sections list). Use the search tools below to find specific articles.
 
 ## Prompts
 
@@ -73,3 +74,32 @@ Create a new comment on an existing Zendesk ticket
   - `ticket_id` (integer): The ID of the ticket to comment on
   - `comment` (string): The comment text/content to add
   - `public` (boolean, optional): Whether the comment should be public (defaults to true)
+
+### search_kb_articles
+
+Search Zendesk Help Center articles by query
+
+- Input:
+  - `query` (string): Search query to find relevant articles
+  - `limit` (integer, optional): Maximum number of articles to return (defaults to 10)
+
+### get_kb_article
+
+Get a specific Zendesk Help Center article by ID
+
+- Input:
+  - `article_id` (integer): The ID of the article to retrieve
+
+### list_kb_sections
+
+List all Zendesk Help Center sections
+
+- Input: None
+
+### get_section_articles
+
+Get articles from a specific Zendesk Help Center section
+
+- Input:
+  - `section_id` (integer): The ID of the section
+  - `limit` (integer, optional): Maximum number of articles to return (defaults to 20)
