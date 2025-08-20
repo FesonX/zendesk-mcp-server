@@ -154,6 +154,7 @@ backup_config() {
 update_claude_config() {
     local config_file="$1"
     local install_dir="$2"
+    local uv_path="$3"
     
     # Create config directory if it doesn't exist
     mkdir -p "$(dirname "$config_file")"
@@ -169,9 +170,9 @@ update_claude_config() {
         # Check if it's valid JSON
         if jq empty "$config_file" 2>/dev/null; then
             # Valid JSON, merge the zendesk server config
-            jq --arg install_dir "$install_dir" '
+            jq --arg install_dir "$install_dir" --arg uv_path "$uv_path" '
                 .mcpServers.zendesk = {
-                    "command": "uv",
+                    "command": $uv_path,
                     "args": [
                         "--directory",
                         $install_dir,
@@ -182,11 +183,11 @@ update_claude_config() {
             ' "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
         else
             print_warning "Existing config is not valid JSON. Creating new configuration..."
-            create_new_config "$config_file" "$install_dir"
+            create_new_config "$config_file" "$install_dir" "$uv_path"
         fi
     else
         # File doesn't exist or is empty, create new
-        create_new_config "$config_file" "$install_dir"
+        create_new_config "$config_file" "$install_dir" "$uv_path"
     fi
 }
 
@@ -194,12 +195,13 @@ update_claude_config() {
 create_new_config() {
     local config_file="$1"
     local install_dir="$2"
+    local uv_path="$3"
     
     cat > "$config_file" << EOF
 {
     "mcpServers": {
         "zendesk": {
-            "command": "uv",
+            "command": "$uv_path",
             "args": [
                 "--directory",
                 "$install_dir",
@@ -451,6 +453,10 @@ main() {
         print_success "uv installed successfully"
     fi
     
+    # Get the absolute path to uv
+    UV_PATH=$(which uv)
+    print_info "uv installed at: $UV_PATH"
+    
     # Step 4: Download and extract source code from GitHub
     print_step "Downloading Zendesk MCP server source code..."
     
@@ -520,7 +526,7 @@ EOF
     CLAUDE_CONFIG_FILE="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
     
     # Update Claude configuration
-    update_claude_config "$CLAUDE_CONFIG_FILE" "$INSTALL_DIR"
+    update_claude_config "$CLAUDE_CONFIG_FILE" "$INSTALL_DIR" "$UV_PATH"
     
     print_success "Claude Desktop configuration updated"
     print_success "Configuration file location: $CLAUDE_CONFIG_FILE"
