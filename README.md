@@ -8,6 +8,7 @@ A Model Context Protocol server for Zendesk.
 This server provides a comprehensive integration with Zendesk. It offers:
 
 - Tools for retrieving and managing Zendesk tickets and comments
+- Support for ticket attachments (images, PDFs, documents) with native image viewing
 - Specialized prompts for ticket analysis and response drafting
 - Intelligent search-based access to Zendesk Help Center articles
 - Efficient knowledge base tools with caching and pagination
@@ -35,6 +36,23 @@ This server provides a comprehensive integration with Zendesk. It offers:
   }
 }
 ```
+
+## Features
+
+### Attachment Handling
+
+The server provides flexible attachment handling with two modes:
+
+**Option 1: Manual (token-efficient)**
+1. Call `get_ticket_comments(ticket_id)` to see attachment metadata
+2. Identify relevant attachments by checking `is_image` flag and `content_type`
+3. Call `get_attachment(attachment_id)` to view/download specific files
+
+**Option 2: Automatic inline images**
+1. Call `get_ticket_comments(ticket_id, include_inline_images=true)`
+2. All image attachments are automatically fetched and displayed
+
+The manual mode is recommended for tickets with many attachments, while automatic mode is best for tickets with few images where visual context is essential.
 
 ## Resources
 
@@ -65,6 +83,7 @@ Retrieve all comments for a Zendesk ticket by its ID
 
 - Input:
   - `ticket_id` (integer): The ID of the ticket to get comments for
+  - `include_inline_images` (boolean, optional): Whether to include inline image attachments (defaults to false)
 
 ### create_ticket_comment
 
@@ -74,6 +93,16 @@ Create a new comment on an existing Zendesk ticket
   - `ticket_id` (integer): The ID of the ticket to comment on
   - `comment` (string): The comment text/content to add
   - `public` (boolean, optional): Whether the comment should be public (defaults to true)
+
+### get_attachment
+
+Download and view a Zendesk ticket attachment (image, document, etc.)
+
+- Input:
+  - `attachment_id` (string): The ID of the attachment to download
+- Returns:
+  - Images: Returned as native ImageContent for direct viewing in multimodal clients
+  - Other files: Returned as base64-encoded data with metadata
 
 ### search_kb_articles
 
