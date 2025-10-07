@@ -216,3 +216,136 @@ class ZendeskClient:
         except Exception as e:
             logger.error(f"Failed to download attachment {attachment_id}: {str(e)}")
             raise Exception(f"Failed to download attachment {attachment_id}: {str(e)}")
+
+    def search_macros(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Search macros by query string.
+
+        Args:
+            query: Search query to match macro titles
+            limit: Maximum number of macros to return
+
+        Returns:
+            List of macro dictionaries with metadata
+        """
+        try:
+            # Construct the full search URL manually
+            import urllib.parse
+            encoded_query = urllib.parse.quote(query)
+            url = f"https://{self.client.macros.base_url}/api/v2/macros/search.json?query={encoded_query}"
+
+            # Use the session to make the request
+            response = self.client.macros.session.get(url, timeout=self.client.macros.timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            macros = []
+            for i, macro in enumerate(data.get('macros', [])):
+                if i >= limit:
+                    break
+
+                # Truncate actions if too large (similar to article body pattern)
+                actions = macro.get('actions', [])
+                if len(actions) > 10:
+                    actions = actions[:10]
+
+                macros.append({
+                    'id': macro.get('id'),
+                    'title': macro.get('title'),
+                    'description': macro.get('description'),
+                    'actions': actions,
+                    'active': macro.get('active'),
+                    'restriction': macro.get('restriction'),
+                    'created_at': str(macro.get('created_at', '')),
+                    'updated_at': str(macro.get('updated_at', '')),
+                    'url': macro.get('url')
+                })
+
+            logger.info(f"Found {len(macros)} macros for query: {query}")
+            return macros
+        except Exception as e:
+            logger.error(f"Failed to search macros: {str(e)}")
+            raise Exception(f"Failed to search macros: {str(e)}")
+
+    def get_macro(self, macro_id: int) -> Dict[str, Any]:
+        """
+        Get a specific macro by ID.
+
+        Args:
+            macro_id: The ID of the macro to retrieve
+
+        Returns:
+            Dictionary with complete macro data
+        """
+        try:
+            # Construct the URL directly to avoid pagination issues
+            url = f"https://{self.client.macros.base_url}/api/v2/macros/{macro_id}.json"
+
+            # Use the session to make the request
+            response = self.client.macros.session.get(url, timeout=self.client.macros.timeout)
+            response.raise_for_status()
+            data = response.json()
+
+            macro = data.get('macro', {})
+            return {
+                'id': macro.get('id'),
+                'title': macro.get('title'),
+                'description': macro.get('description'),
+                'actions': macro.get('actions', []),
+                'active': macro.get('active'),
+                'position': macro.get('position'),
+                'restriction': macro.get('restriction'),
+                'created_at': str(macro.get('created_at', '')),
+                'updated_at': str(macro.get('updated_at', '')),
+                'url': macro.get('url')
+            }
+        except Exception as e:
+            logger.error(f"Failed to get macro {macro_id}: {str(e)}")
+            raise Exception(f"Failed to get macro {macro_id}: {str(e)}")
+
+    def apply_macro_to_ticket(self, ticket_id: int, macro_id: int) -> Dict[str, Any]:
+        """
+        Apply a macro to a ticket.
+
+        This performs a two-step process:
+        1. Preview the macro changes using show_macro_effect
+        2. Apply the changes by updating the ticket
+
+        Args:
+            ticket_id: The ID of the ticket to apply the macro to
+            macro_id: The ID of the macro to apply
+
+        Returns:
+            Dictionary with operation status and updated ticket info
+        """
+        try:
+            logger.info(f"Applying macro {macro_id} to ticket {ticket_id}")
+
+            # Step 1: Preview the macro effect
+            macro_result = self.client.tickets.show_macro_effect(ticket_id, macro_id)
+            logger.info(f"Successfully previewed macro {macro_id} effect on ticket {ticket_id}")
+
+            # Step 2: Apply the changes by updating the ticket
+            # update() returns a TicketAudit object, which contains the updated ticket
+            ticket_audit = self.client.tickets.update(macro_result.ticket)
+            logger.info(f"Successfully applied macro {macro_id} to ticket {ticket_id}")
+
+            # Extract the ticket from the audit
+            updated_ticket = ticket_audit.ticket
+
+            return {
+                'success': True,
+                'ticket_id': ticket_id,
+                'macro_id': macro_id,
+                'message': f'Macro {macro_id} successfully applied to ticket {ticket_id}',
+                'updated_ticket': {
+                    'id': updated_ticket.id,
+                    'subject': updated_ticket.subject,
+                    'status': updated_ticket.status,
+                    'priority': updated_ticket.priority,
+                    'updated_at': str(updated_ticket.updated_at)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Failed to apply macro {macro_id} to ticket {ticket_id}: {str(e)}")
+            raise Exception(f"Failed to apply macro {macro_id} to ticket {ticket_id}: {str(e)}")

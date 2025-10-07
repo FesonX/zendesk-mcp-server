@@ -263,6 +263,57 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["attachment_id"]
             }
+        ),
+        types.Tool(
+            name="search_macros",
+            description="Search Zendesk macros by query string",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query to find relevant macros"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of macros to return",
+                        "default": 10
+                    }
+                },
+                "required": ["query"]
+            }
+        ),
+        types.Tool(
+            name="get_macro",
+            description="Get a specific Zendesk macro by ID",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "macro_id": {
+                        "type": "integer",
+                        "description": "The ID of the macro to retrieve"
+                    }
+                },
+                "required": ["macro_id"]
+            }
+        ),
+        types.Tool(
+            name="apply_macro_to_ticket",
+            description="Apply a Zendesk macro to a ticket",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "ticket_id": {
+                        "type": "integer",
+                        "description": "The ID of the ticket to apply the macro to"
+                    },
+                    "macro_id": {
+                        "type": "integer",
+                        "description": "The ID of the macro to apply"
+                    }
+                },
+                "required": ["ticket_id", "macro_id"]
+            }
         )
     ]
 
@@ -365,7 +416,7 @@ async def handle_call_tool(
             logger.info(f"Downloading attachment {arguments}")
 
             attachment_data = zendesk_client.get_attachment(int(arguments["attachment_id"]))
-            
+
 
             # If it's an image, return as ImageContent for native viewing
             if attachment_data['content_type'].startswith('image/'):
@@ -386,6 +437,33 @@ async def handle_call_tool(
                         'note': 'Base64-encoded file content. Decode to access the file.'
                     }, indent=2)
                 )]
+
+        elif name == "search_macros":
+            macros = zendesk_client.search_macros(
+                query=arguments["query"],
+                limit=arguments.get("limit", 10)
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(macros, indent=2)
+            )]
+
+        elif name == "get_macro":
+            macro = zendesk_client.get_macro(arguments["macro_id"])
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(macro, indent=2)
+            )]
+
+        elif name == "apply_macro_to_ticket":
+            result = zendesk_client.apply_macro_to_ticket(
+                ticket_id=arguments["ticket_id"],
+                macro_id=arguments["macro_id"]
+            )
+            return [types.TextContent(
+                type="text",
+                text=json.dumps(result, indent=2)
+            )]
 
         else:
             raise ValueError(f"Unknown tool: {name}")

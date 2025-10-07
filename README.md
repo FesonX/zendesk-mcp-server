@@ -9,6 +9,7 @@ This server provides a comprehensive integration with Zendesk. It offers:
 
 - Tools for retrieving and managing Zendesk tickets and comments
 - Support for ticket attachments (images, PDFs, documents) with native image viewing
+- Macro management and application for automated ticket actions
 - Specialized prompts for ticket analysis and response drafting
 - Intelligent search-based access to Zendesk Help Center articles
 - Efficient knowledge base tools with caching and pagination
@@ -53,6 +54,20 @@ The server provides flexible attachment handling with two modes:
 2. All image attachments are automatically fetched and displayed
 
 The manual mode is recommended for tickets with many attachments, while automatic mode is best for tickets with few images where visual context is essential.
+
+### Macros
+
+The server supports Zendesk macros for automated ticket workflows:
+
+- **Search and discover macros** by keywords or title
+- **View complete macro configurations** including all actions and restrictions
+- **Apply macros to tickets** to automate common actions (status changes, canned responses, field updates, etc.)
+
+Macros are useful for:
+- Standardizing responses to common issues
+- Automating repetitive ticket workflows
+- Applying consistent ticket categorization and routing
+- Ensuring compliance with team procedures
 
 ## Resources
 
@@ -132,3 +147,37 @@ Get articles from a specific Zendesk Help Center section
 - Input:
   - `section_id` (integer): The ID of the section
   - `limit` (integer, optional): Maximum number of articles to return (defaults to 20)
+
+### search_macros
+
+Search Zendesk macros by query string
+
+- Input:
+  - `query` (string): Search query to find relevant macros (required, cannot be empty)
+  - `limit` (integer, optional): Maximum number of macros to return (defaults to 10)
+- Returns:
+  - List of macros with ID, title, description, actions, active status, and metadata
+
+### get_macro
+
+Get a specific Zendesk macro by ID
+
+- Input:
+  - `macro_id` (integer): The ID of the macro to retrieve
+- Returns:
+  - Complete macro configuration including all actions, restrictions, and settings
+
+### apply_macro_to_ticket
+
+Apply a Zendesk macro to a ticket
+
+- Input:
+  - `ticket_id` (integer): The ID of the ticket to apply the macro to
+  - `macro_id` (integer): The ID of the macro to apply
+- Returns:
+  - Success status and updated ticket information
+- Note: This operation modifies ticket data. The macro's actions (status changes, comments, field updates, etc.) are applied to the ticket.
+
+## License
+
+Apache License 2.0

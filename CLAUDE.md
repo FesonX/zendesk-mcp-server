@@ -46,7 +46,11 @@ See `.env.example` for the template.
 
 The server implements three MCP primitives:
 
-- **Tools**: Direct API operations (get_ticket, search_kb_articles, etc.)
+- **Tools**: Direct API operations including:
+  - Tickets: `get_ticket`, `get_ticket_comments`, `create_ticket_comment`
+  - Knowledge Base: `search_kb_articles`, `get_kb_article`, `list_kb_sections`, `get_section_articles`
+  - Attachments: `get_attachment`
+  - Macros: `search_macros`, `get_macro`, `apply_macro_to_ticket`
 - **Prompts**: Templated workflows (analyze-ticket, draft-ticket-response)
 - **Resources**: URI-based access to knowledge base metadata (zendesk://knowledge-base)
 
@@ -95,3 +99,66 @@ The server supports ticket attachments (images, PDFs, documents):
 **Token efficiency**:
 - Manual mode: Only download what you need (~99% savings for large tickets)
 - Automatic mode: Best for tickets with few images (<10) where visual context is essential
+
+### Macros Support
+
+The server supports Zendesk macros for automated ticket actions:
+
+- **Search macros**: Use `search_macros(query, limit)` to find macros by title/keyword
+- **Get macro details**: Use `get_macro(macro_id)` to retrieve full macro configuration
+- **Apply to tickets**: Use `apply_macro_to_ticket(ticket_id, macro_id)` to apply macro actions
+
+**Important Implementation Notes:**
+
+1. **Zendesk API requires non-empty query** for macro search - empty strings return 400 Bad Request
+2. **Direct HTTP requests pattern**: Some Zendesk operations don't work well with zenpy's abstraction layer. For these cases, use direct HTTP requests via the authenticated session:
+   ```python
+   url = f"https://{self.client.macros.base_url}/api/v2/macros/search.json?query={encoded_query}"
+   response = self.client.macros.session.get(url, timeout=self.client.macros.timeout)
+   response.raise_for_status()
+   data = response.json()
+   ```
+   This pattern is used in: `search_macros()`, `get_macro()`
+
+3. **TicketAudit objects**: `client.tickets.update()` returns a `TicketAudit` object (not a Ticket). Access the ticket via `ticket_audit.ticket`
+
+4. **Macro application process**: Uses Zendesk's two-step pattern:
+   - Step 1: Preview changes with `show_macro_effect(ticket_id, macro_id)` → returns `MacroResult`
+   - Step 2: Apply changes with `tickets.update(macro_result.ticket)` → returns `TicketAudit`
+
+**Testing:**
+- `test_search_macros.py` - Tests search and get operations
+- `test_apply_macro.py` - Interactive script for applying macros to tickets
+
+## Common Pitfalls & Solutions
+
+### Zenpy Abstraction Issues
+
+**Problem**: Using zenpy's high-level methods (e.g., `self.client.macros(id=X)`) may fail with cryptic errors like "'str' object has no attribute 'scheme'" or pagination issues.
+
+**Solution**: Use direct HTTP requests via the authenticated session:
+```python
+url = f"https://{self.client.macros.base_url}/api/v2/endpoint.json"
+response = self.client.macros.session.get(url, timeout=self.client.macros.timeout)
+response.raise_for_status()
+data = response.json()
+```
+
+The session object is available on any zenpy API object (e.g., `self.client.macros.session`, `self.client.tickets.session`) and is already authenticated.
+
+### TicketAudit vs Ticket Objects
+
+**Problem**: After updating a ticket with `client.tickets.update(ticket)`, attempting to access ticket attributes directly (e.g., `result.id`) fails.
+
+**Solution**: The `update()` method returns a `TicketAudit` object, not a `Ticket`. Extract the ticket:
+```python
+ticket_audit = self.client.tickets.update(ticket)
+actual_ticket = ticket_audit.ticket
+# Now access actual_ticket.id, actual_ticket.status, etc.
+```
+
+### Empty Query Strings
+
+**Problem**: Zendesk's macro search endpoint returns 400 Bad Request with empty query strings.
+
+**Solution**: Always validate that search queries are non-empty before making API calls. Provide a default query or handle empty queries at the application level.
