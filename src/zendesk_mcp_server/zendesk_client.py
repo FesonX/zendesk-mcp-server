@@ -1,5 +1,6 @@
 from typing import Dict, Any, List
 import logging
+import base64
 
 from zenpy import Zenpy
 from zenpy.lib.api_objects import Comment
@@ -40,19 +41,42 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to get ticket {ticket_id}: {str(e)}")
 
-    def get_ticket_comments(self, ticket_id: int) -> List[Dict[str, Any]]:
+    def get_ticket_comments(self, ticket_id: int, include_inline_images: bool = False) -> List[Dict[str, Any]]:
         """
         Get all comments for a specific ticket.
+
+        Args:
+            ticket_id: ID of the ticket
+            include_inline_images: Whether to include inline image attachments (default: False)
         """
         try:
-            comments = self.client.tickets.comments(ticket=ticket_id)
+            # Fetch comments with optional inline images
+            if include_inline_images:
+                comments = self.client.tickets.comments(
+                    ticket=ticket_id,
+                    include_inline_images=True
+                )
+            else:
+                comments = self.client.tickets.comments(ticket=ticket_id)
+
             return [{
                 'id': comment.id,
                 'author_id': comment.author_id,
                 'body': comment.body,
                 'html_body': comment.html_body,
                 'public': comment.public,
-                'created_at': str(comment.created_at)
+                'created_at': str(comment.created_at),
+                'attachments': [
+                    {
+                        'id': att.id,
+                        'file_name': att.file_name,
+                        'content_type': att.content_type,
+                        'content_url': att.content_url,
+                        'size': att.size,
+                        'is_image': att.content_type.startswith('image/') if att.content_type else False
+                    }
+                    for att in (comment.attachments or [])
+                ] if comment.attachments else []
             } for comment in comments]
         except Exception as e:
             raise Exception(f"Failed to get comments for ticket {ticket_id}: {str(e)}")
@@ -157,3 +181,38 @@ class ZendeskClient:
         except Exception as e:
             logger.error(f"Failed to get section articles: {str(e)}")
             raise Exception(f"Failed to get section articles: {str(e)}")
+
+    def get_attachment(self, attachment_id: int | str) -> Dict[str, Any]:
+        """
+        Download and return an attachment by ID.
+
+        Args:
+            attachment_id: The ID of the attachment to download
+
+        Returns:
+            Dictionary with attachment metadata and base64-encoded data
+        """
+        try:
+            # Convert to int if string
+            attachment_id = int(attachment_id) if isinstance(attachment_id, str) else attachment_id
+
+            # Get attachment metadata first
+            attachment = self.client.attachments(id=attachment_id)
+
+            # Download attachment content to BytesIO
+            content_stream = self.client.attachments.download(attachment_id)
+
+            # Encode as base64
+            base64_data = base64.b64encode(content_stream.getvalue()).decode('utf-8')
+
+            logger.info(f"Downloaded attachment {attachment_id}: {attachment.file_name} ({attachment.size} bytes)")
+            return {
+                'id': attachment.id,
+                'file_name': attachment.file_name,
+                'content_type': attachment.content_type,
+                'size': attachment.size,
+                'data': base64_data
+            }
+        except Exception as e:
+            logger.error(f"Failed to download attachment {attachment_id}: {str(e)}")
+            raise Exception(f"Failed to download attachment {attachment_id}: {str(e)}")

@@ -38,6 +38,9 @@ Please fetch the ticket info and comments to analyze it and provide:
 1. A summary of the issue
 2. The current status and timeline
 3. Key points of interaction
+4. Any attachments (images, files) that provide context
+
+If comments contain image attachments, use the get_attachment tool to view them.
 
 Remember to be professional and focus on actionable insights.
 """
@@ -47,13 +50,14 @@ You are a helpful Zendesk support agent. You need to draft a response to ticket 
 
 Please:
 1. Fetch the ticket info and comments to understand the issue
-2. Search the knowledge base for relevant articles using the search_kb_articles tool
-3. Draft a professional and helpful response that:
+2. Review any image attachments using the get_attachment tool if they provide relevant context
+3. Search the knowledge base for relevant articles using the search_kb_articles tool
+4. Draft a professional and helpful response that:
    - Acknowledges the customer's concern
-   - Addresses the specific issues raised
+   - Addresses the specific issues raised (including any issues shown in attachments)
    - Provides clear next steps or ask for specific details need to proceed
    - Maintains a friendly and professional tone
-4. Ask for confirmation before commenting on the ticket
+5. Ask for confirmation before commenting on the ticket
 
 The response should be formatted well and ready to be posted as a comment.
 """
@@ -153,6 +157,11 @@ async def handle_list_tools() -> list[types.Tool]:
                     "ticket_id": {
                         "type": "integer",
                         "description": "The ID of the ticket to get comments for"
+                    },
+                    "include_inline_images": {
+                        "type": "boolean",
+                        "description": "Whether to include inline image attachments (default: false)",
+                        "default": False
                     }
                 },
                 "required": ["ticket_id"]
@@ -240,6 +249,20 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["section_id"]
             }
+        ),
+        types.Tool(
+            name="get_attachment",
+            description="Download and view a Zendesk ticket attachment (image, document, etc.)",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "attachment_id": {
+                        "type": "string",
+                        "description": "The ID of the attachment to download"
+                    }
+                },
+                "required": ["attachment_id"]
+            }
         )
     ]
 
@@ -262,12 +285,35 @@ async def handle_call_tool(
             )]
 
         elif name == "get_ticket_comments":
+            include_inline = arguments.get("include_inline_images", False)
             comments = zendesk_client.get_ticket_comments(
-                arguments["ticket_id"])
-            return [types.TextContent(
+                ticket_id=arguments["ticket_id"],
+                include_inline_images=include_inline
+            )
+
+            # Build response content list
+            response_content = [types.TextContent(
                 type="text",
                 text=json.dumps(comments)
             )]
+
+            # If include_inline_images is True, fetch and append image attachments
+            if include_inline:
+                for comment in comments:
+                    for attachment in comment.get('attachments', []):
+                        if attachment.get('is_image', False):
+                            try:
+                                logger.info(f"Fetching inline image: {attachment['file_name']} (ID: {attachment['id']})")
+                                attachment_data = zendesk_client.get_attachment(attachment['id'])
+                                response_content.append(types.ImageContent(
+                                    type="image",
+                                    data=attachment_data['data'],
+                                    mimeType=attachment_data['content_type']
+                                ))
+                            except Exception as e:
+                                logger.error(f"Failed to fetch attachment {attachment['id']}: {e}")
+
+            return response_content
 
         elif name == "create_ticket_comment":
             public = arguments.get("public", True)
@@ -314,6 +360,32 @@ async def handle_call_tool(
                 type="text",
                 text=json.dumps(articles, indent=2)
             )]
+
+        elif name == "get_attachment":
+            logger.info(f"Downloading attachment {arguments}")
+
+            attachment_data = zendesk_client.get_attachment(int(arguments["attachment_id"]))
+            
+
+            # If it's an image, return as ImageContent for native viewing
+            if attachment_data['content_type'].startswith('image/'):
+                return [types.ImageContent(
+                    type="image",
+                    data=attachment_data['data'],
+                    mimeType=attachment_data['content_type']
+                )]
+            else:
+                # For non-images (PDFs, docs, etc.), return metadata + base64
+                return [types.TextContent(
+                    type="text",
+                    text=json.dumps({
+                        'file_name': attachment_data['file_name'],
+                        'content_type': attachment_data['content_type'],
+                        'size': attachment_data['size'],
+                        'base64_data': attachment_data['data'],
+                        'note': 'Base64-encoded file content. Decode to access the file.'
+                    }, indent=2)
+                )]
 
         else:
             raise ValueError(f"Unknown tool: {name}")
