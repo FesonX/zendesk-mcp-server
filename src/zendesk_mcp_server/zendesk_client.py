@@ -12,12 +12,19 @@ class ZendeskClient:
     def __init__(self, subdomain: str, email: str, token: str, timeout: int = 30):
         """
         Initialize the Zendesk client using zenpy lib.
+
+        Args:
+            subdomain: Zendesk subdomain
+            email: Zendesk account email
+            token: Zendesk API token
+            timeout: Request timeout in seconds
         """
+
         self.client = Zenpy(
             subdomain=subdomain,
             email=email,
             token=token,
-            timeout=timeout
+            timeout=timeout,
         )
 
     def get_ticket(self, ticket_id: int) -> Dict[str, Any]:
@@ -96,12 +103,18 @@ class ZendeskClient:
         except Exception as e:
             raise Exception(f"Failed to post comment on ticket {ticket_id}: {str(e)}")
 
-    def search_articles(self, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+    def search_articles(self, query: str, limit: int = 10, locale: str = 'en-us') -> List[Dict[str, Any]]:
         """
         Search help center articles by query.
+
+        Args:
+            query: Search query string
+            limit: Maximum number of articles to return (default: 10)
+            locale: Language locale for articles (default: 'en-us')
+                    Examples: 'en-us', 'zh-cn', 'zh-tw', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru', 'tr'
         """
         try:
-            results = self.client.help_center.articles.search(query=query)
+            results = self.client.help_center.articles.search(query=query, locale=locale)
             articles = []
             for i, article in enumerate(results):
                 if i >= limit:
@@ -111,27 +124,36 @@ class ZendeskClient:
                     'title': article.title,
                     'body': article.body[:1000] if len(article.body) > 1000 else article.body,
                     'section_id': article.section_id,
+                    # 'locale': article.locale,
                     'updated_at': str(article.updated_at),
                     'url': article.html_url
                 })
-            logger.info(f"Found {len(articles)} articles for query: {query}")
+            logger.info(f"Found {len(articles)} articles for query: {query} (locale: {locale})")
             return articles
         except Exception as e:
             logger.error(f"Failed to search articles: {str(e)}")
             raise Exception(f"Failed to search articles: {str(e)}")
 
-    def get_article(self, article_id: int) -> Dict[str, Any]:
+    def get_article(self, article_id: int, locale: str = 'en-us') -> Dict[str, Any]:
         """
         Get a specific help center article by ID.
+
+        Args:
+            article_id: The ID of the article to retrieve
+            locale: Language locale for the article (default: 'en-us')
+                    Examples: 'en-us', 'zh-cn', 'zh-tw', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru', 'tr'
         """
         try:
-            article = self.client.help_center.articles(id=article_id)
+            article = self.client.help_center.articles(id=article_id, locale=locale)
+
+
             return {
                 'id': article.id,
                 'title': article.title,
                 'body': article.body,
                 'section_id': article.section_id,
                 'author_id': article.author_id,
+                # 'locale': article.locale,
                 'updated_at': str(article.updated_at),
                 'url': article.html_url,
                 'vote_sum': article.vote_sum,
@@ -159,12 +181,18 @@ class ZendeskClient:
             logger.error(f"Failed to list sections: {str(e)}")
             raise Exception(f"Failed to list sections: {str(e)}")
 
-    def get_section_articles(self, section_id: int, limit: int = 20) -> List[Dict[str, Any]]:
+    def get_section_articles(self, section_id: int, limit: int = 20, locale: str = 'en-us') -> List[Dict[str, Any]]:
         """
         Get articles for a specific section.
+
+        Args:
+            section_id: The ID of the section
+            limit: Maximum number of articles to return (default: 20)
+            locale: Language locale for articles (default: 'en-us')
+                    Examples: 'en-us', 'zh-cn', 'zh-tw', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru', 'tr'
         """
         try:
-            articles = self.client.help_center.sections.articles(section_id=section_id)
+            articles = self.client.help_center.sections.articles(section_id=section_id, locale=locale)
             result = []
             for i, article in enumerate(articles):
                 if i >= limit:
@@ -176,7 +204,7 @@ class ZendeskClient:
                     'updated_at': str(article.updated_at),
                     'url': article.html_url
                 })
-            logger.info(f"Found {len(result)} articles in section {section_id}")
+            logger.info(f"Found {len(result)} articles in section {section_id} (locale: {locale})")
             return result
         except Exception as e:
             logger.error(f"Failed to get section articles: {str(e)}")
