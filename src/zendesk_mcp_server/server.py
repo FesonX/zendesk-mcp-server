@@ -26,7 +26,7 @@ zendesk_client = ZendeskClient(
     subdomain=os.getenv("ZENDESK_SUBDOMAIN"),
     email=os.getenv("ZENDESK_EMAIL"),
     token=os.getenv("ZENDESK_API_KEY"),
-    timeout=30
+    timeout=30,
 )
 
 server = Server("Zendesk Server")
@@ -204,6 +204,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "integer",
                         "description": "Maximum number of articles to return",
                         "default": 10
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Language locale for articles (default: 'en-us'). Examples: 'en-us', 'zh-cn', 'zh-tw', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru', 'tr'",
+                        "default": "en-us"
                     }
                 },
                 "required": ["query"]
@@ -218,6 +223,11 @@ async def handle_list_tools() -> list[types.Tool]:
                     "article_id": {
                         "type": "integer",
                         "description": "The ID of the article to retrieve"
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Language locale for the article (default: 'en-us'). Examples: 'en-us', 'zh-cn', 'zh-tw', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru', 'tr'",
+                        "default": "en-us"
                     }
                 },
                 "required": ["article_id"]
@@ -245,6 +255,11 @@ async def handle_list_tools() -> list[types.Tool]:
                         "type": "integer",
                         "description": "Maximum number of articles to return",
                         "default": 20
+                    },
+                    "locale": {
+                        "type": "string",
+                        "description": "Language locale for articles (default: 'en-us'). Examples: 'en-us', 'zh-cn', 'zh-tw', 'ja', 'ko', 'de', 'es', 'fr', 'it', 'ru', 'tr'",
+                        "default": "en-us"
                     }
                 },
                 "required": ["section_id"]
@@ -381,7 +396,8 @@ async def handle_call_tool(
         elif name == "search_kb_articles":
             articles = zendesk_client.search_articles(
                 query=arguments["query"],
-                limit=arguments.get("limit", 10)
+                limit=arguments.get("limit", 10),
+                locale=arguments.get("locale", "en-us")
             )
             return [types.TextContent(
                 type="text",
@@ -389,7 +405,10 @@ async def handle_call_tool(
             )]
 
         elif name == "get_kb_article":
-            article = zendesk_client.get_article(arguments["article_id"])
+            article = zendesk_client.get_article(
+                article_id=arguments["article_id"],
+                locale=arguments.get("locale", "en-us")
+            )
             return [types.TextContent(
                 type="text",
                 text=json.dumps(article, indent=2)
@@ -405,7 +424,8 @@ async def handle_call_tool(
         elif name == "get_section_articles":
             articles = zendesk_client.get_section_articles(
                 section_id=arguments["section_id"],
-                limit=arguments.get("limit", 20)
+                limit=arguments.get("limit", 20),
+                locale=arguments.get("locale", "en-us")
             )
             return [types.TextContent(
                 type="text",
@@ -495,15 +515,15 @@ def get_cached_sections():
 
 
 @ttl_cache(ttl=3600)
-def get_cached_article(article_id: int):
-    """Cache individual articles for 1 hour"""
-    return zendesk_client.get_article(article_id)
+def get_cached_article(article_id: int, locale: str = 'en-us'):
+    """Cache individual articles for 1 hour (per locale)"""
+    return zendesk_client.get_article(article_id, locale)
 
 
 @ttl_cache(ttl=900)
-def search_cached_articles(query: str, limit: int = 10):
-    """Cache search results for 15 minutes"""
-    return zendesk_client.search_articles(query, limit)
+def search_cached_articles(query: str, limit: int = 10, locale: str = 'en-us'):
+    """Cache search results for 15 minutes (per locale)"""
+    return zendesk_client.search_articles(query, limit, locale)
 
 
 @server.read_resource()
