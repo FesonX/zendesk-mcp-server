@@ -192,7 +192,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="search_kb_articles",
-            description="Search Zendesk Help Center articles by query",
+            description="Search Zendesk Help Center articles by query,  check locale argument base on user language",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -216,7 +216,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_kb_article",
-            description="Get a specific Zendesk Help Center article by ID",
+            description="Get a specific Zendesk Help Center article by ID, check locale argument base on user language",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -243,7 +243,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="get_section_articles",
-            description="Get articles from a specific Zendesk Help Center section",
+            description="Get articles from a specific Zendesk Help Center section with locale support",
             inputSchema={
                 "type": "object",
                 "properties": {
