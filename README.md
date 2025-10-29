@@ -12,6 +12,7 @@ This server provides a comprehensive integration with Zendesk. It offers:
 - Macro management and application for automated ticket actions
 - Specialized prompts for ticket analysis and response drafting
 - Intelligent search-based access to Zendesk Help Center articles
+- Multi-language support with locale selection for knowledge base content
 - Efficient knowledge base tools with caching and pagination
 
 ![demo](https://res.cloudinary.com/leecy-me/image/upload/v1736410626/open/zendesk_yunczu.gif)
@@ -39,6 +40,23 @@ This server provides a comprehensive integration with Zendesk. It offers:
 ```
 
 ## Features
+
+### Multi-Language Support
+
+**Features:**
+- All knowledge base tools (`search_kb_articles`, `get_kb_article`, `get_section_articles`) support locale parameter
+- Article URLs are automatically updated to match the requested locale (e.g., `/hc/en-us/articles/123` → `/hc/zh-cn/articles/123`)
+- Article responses include a `locale` field showing the content language
+- Cache is locale-aware to prevent cross-language cache pollution
+
+**Example:**
+```python
+# Search articles in Chinese
+search_kb_articles(query="密码重置", locale="zh-cn")
+
+# Get article in English
+get_kb_article(article_id=123456, locale="en-us")
+```
 
 ### Attachment Handling
 
@@ -126,6 +144,7 @@ Search Zendesk Help Center articles by query
 - Input:
   - `query` (string): Search query to find relevant articles
   - `limit` (integer, optional): Maximum number of articles to return (defaults to 10)
+  - `locale` (string, optional): Language locale for articles (defaults to `en-us`)
 
 ### get_kb_article
 
@@ -133,6 +152,7 @@ Get a specific Zendesk Help Center article by ID
 
 - Input:
   - `article_id` (integer): The ID of the article to retrieve
+  - `locale` (string, optional): Language locale for the article (defaults to `en-us`)
 
 ### list_kb_sections
 
@@ -147,6 +167,7 @@ Get articles from a specific Zendesk Help Center section
 - Input:
   - `section_id` (integer): The ID of the section
   - `limit` (integer, optional): Maximum number of articles to return (defaults to 20)
+  - `locale` (string, optional): Language locale for articles (defaults to `en-us`)
 
 ### search_macros
 
