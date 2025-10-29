@@ -155,23 +155,24 @@ update_claude_config() {
     local config_file="$1"
     local install_dir="$2"
     local uv_path="$3"
-    
+    local server_name="${4:-zendesk}"  # Default to "zendesk" if not provided
+
     # Create config directory if it doesn't exist
     mkdir -p "$(dirname "$config_file")"
-    
+
     # Backup existing config
     backup_config "$config_file"
-    
+
     # Check if config file exists and has content
     if [ -f "$config_file" ] && [ -s "$config_file" ]; then
         # File exists and is not empty, try to merge
         print_step "Merging with existing Claude configuration..."
-        
+
         # Check if it's valid JSON
         if jq empty "$config_file" 2>/dev/null; then
             # Valid JSON, merge the zendesk server config
-            jq --arg install_dir "$install_dir" --arg uv_path "$uv_path" '
-                .mcpServers.zendesk = {
+            jq --arg server_name "$server_name" --arg install_dir "$install_dir" --arg uv_path "$uv_path" '
+                .mcpServers[$server_name] = {
                     "command": $uv_path,
                     "args": [
                         "--directory",
@@ -183,11 +184,11 @@ update_claude_config() {
             ' "$config_file" > "${config_file}.tmp" && mv "${config_file}.tmp" "$config_file"
         else
             print_warning "Existing config is not valid JSON. Creating new configuration..."
-            create_new_config "$config_file" "$install_dir" "$uv_path"
+            create_new_config "$config_file" "$install_dir" "$uv_path" "$server_name"
         fi
     else
         # File doesn't exist or is empty, create new
-        create_new_config "$config_file" "$install_dir" "$uv_path"
+        create_new_config "$config_file" "$install_dir" "$uv_path" "$server_name"
     fi
 }
 
@@ -196,11 +197,12 @@ create_new_config() {
     local config_file="$1"
     local install_dir="$2"
     local uv_path="$3"
-    
+    local server_name="${4:-zendesk}"  # Default to "zendesk" if not provided
+
     cat > "$config_file" << EOF
 {
     "mcpServers": {
-        "zendesk": {
+        "$server_name": {
             "command": "$uv_path",
             "args": [
                 "--directory",
@@ -270,6 +272,201 @@ install_enterprise_certs() {
     rm -f "$temp_cert_file"
     
     print_success "Enterprise certificates installed successfully"
+}
+
+# Function to detect existing Zendesk MCP installations
+detect_existing_installations() {
+    local config_file="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+
+    if [ ! -f "$config_file" ]; then
+        echo ""
+        return 0
+    fi
+
+    if ! jq empty "$config_file" 2>/dev/null; then
+        echo ""
+        return 0
+    fi
+
+    # Find all MCP servers with names starting with "zendesk"
+    local zendesk_servers
+    zendesk_servers=$(jq -r '.mcpServers | keys[] | select(startswith("zendesk"))' "$config_file" 2>/dev/null)
+
+    # Return the list of server names (empty string if none found)
+    echo "$zendesk_servers"
+    return 0
+}
+
+# Function to extract installation info from a server name
+extract_installation_info() {
+    local server_name="$1"
+    local config_file="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
+
+    # Get installation directory from Claude config
+    local install_dir
+    install_dir=$(jq -r ".mcpServers.\"$server_name\".args[1]" "$config_file" 2>/dev/null)
+
+    if [ -z "$install_dir" ] || [ "$install_dir" == "null" ]; then
+        echo "||||"
+        return 0
+    fi
+
+    # Check if .env exists in that directory
+    if [ ! -f "$install_dir/.env" ]; then
+        echo "$install_dir||||"
+        return 0
+    fi
+
+    # Extract credentials from .env
+    local subdomain email api_key
+    subdomain=$(grep "^ZENDESK_SUBDOMAIN=" "$install_dir/.env" 2>/dev/null | cut -d'=' -f2)
+    email=$(grep "^ZENDESK_EMAIL=" "$install_dir/.env" 2>/dev/null | cut -d'=' -f2)
+    api_key=$(grep "^ZENDESK_API_KEY=" "$install_dir/.env" 2>/dev/null | cut -d'=' -f2)
+
+    # Return pipe-separated values for easy parsing
+    echo "$install_dir|$subdomain|$email|$api_key"
+    return 0
+}
+
+# Function to display existing installations and get user choice
+handle_existing_installations() {
+    local existing_servers="$1"
+    local server_count=$(echo "$existing_servers" | wc -l | tr -d ' ')
+
+    echo ""
+    echo "========================================================="
+    print_info "Found $server_count existing Zendesk MCP installation(s):"
+    echo "========================================================="
+    echo ""
+
+    local index=1
+    local -a server_names
+    local -a server_info
+
+    while IFS= read -r server_name; do
+        server_names+=("$server_name")
+        local info=$(extract_installation_info "$server_name")
+        server_info+=("$info")
+
+        IFS='|' read -r install_dir subdomain email api_key <<< "$info"
+
+        echo "[$index] Server name: $server_name"
+        echo "    Directory: $install_dir"
+        if [ -n "$subdomain" ]; then
+            echo "    Subdomain: $subdomain"
+            echo "    Email: $email"
+        else
+            echo "    Status: ⚠ Configuration not found"
+        fi
+        echo ""
+
+        ((index++))
+    done <<< "$existing_servers"
+
+    echo "What would you like to do?"
+    echo "[1] Update an existing installation (reuse credentials)"
+    echo "[2] Install a new instance (different subdomain/credentials)"
+    echo "[3] Cancel"
+    echo ""
+
+    local choice
+    read -p "Enter your choice [1-3]: " choice
+
+    case $choice in
+        1)
+            if [ $server_count -eq 1 ]; then
+                # Only one installation, use it directly
+                local info="${server_info[0]}"
+                IFS='|' read -r install_dir subdomain email api_key <<< "$info"
+
+                if [ -z "$subdomain" ]; then
+                    print_error "Cannot extract credentials from existing installation"
+                    echo "Installation cancelled."
+                    exit 0
+                fi
+
+                echo ""
+                print_success "Will update installation: ${server_names[0]}"
+                echo "  Directory: $install_dir"
+                echo "  Subdomain: $subdomain"
+                echo "  Email: $email"
+                echo ""
+                read -p "Continue with this configuration? (y/N): " confirm
+
+                if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                    echo "Installation cancelled."
+                    exit 0
+                fi
+
+                # Export values for use in main installation
+                export UPDATE_MODE="true"
+                export UPDATE_SERVER_NAME="${server_names[0]}"
+                export ZENDESK_SUBDOMAIN="$subdomain"
+                export ZENDESK_EMAIL="$email"
+                export ZENDESK_API_KEY="$api_key"
+                export INSTALL_DIR="$install_dir"
+                return 0
+            else
+                # Multiple installations, ask which one to update
+                echo ""
+                read -p "Which installation do you want to update? [1-$server_count]: " install_choice
+
+                if [[ ! "$install_choice" =~ ^[0-9]+$ ]] || [ "$install_choice" -lt 1 ] || [ "$install_choice" -gt "$server_count" ]; then
+                    print_error "Invalid choice"
+                    echo "Installation cancelled."
+                    exit 0
+                fi
+
+                local selected_index=$((install_choice - 1))
+                local info="${server_info[$selected_index]}"
+                IFS='|' read -r install_dir subdomain email api_key <<< "$info"
+
+                if [ -z "$subdomain" ]; then
+                    print_error "Cannot extract credentials from selected installation"
+                    return 1
+                fi
+
+                echo ""
+                print_success "Will update installation: ${server_names[$selected_index]}"
+                echo "  Directory: $install_dir"
+                echo "  Subdomain: $subdomain"
+                echo "  Email: $email"
+                echo ""
+                read -p "Continue with this configuration? (y/N): " confirm
+
+                if [[ ! $confirm =~ ^[Yy]$ ]]; then
+                    echo "Installation cancelled."
+                    exit 0
+                fi
+
+                # Export values for use in main installation
+                export UPDATE_MODE="true"
+                export UPDATE_SERVER_NAME="${server_names[$selected_index]}"
+                export ZENDESK_SUBDOMAIN="$subdomain"
+                export ZENDESK_EMAIL="$email"
+                export ZENDESK_API_KEY="$api_key"
+                export INSTALL_DIR="$install_dir"
+                return 0
+            fi
+            ;;
+        2)
+            # New installation with different credentials
+            echo ""
+            print_info "Installing new instance alongside existing installation(s)..."
+            export UPDATE_MODE="false"
+            export NEW_INSTANCE="true"
+            return 0
+            ;;
+        3)
+            echo "Installation cancelled."
+            exit 0
+            ;;
+        *)
+            print_error "Invalid choice"
+            echo "Installation cancelled."
+            exit 0
+            ;;
+    esac
 }
 
 # Function to test the MCP server installation
@@ -379,25 +576,46 @@ main() {
     echo "     (Self-contained version with embedded certificates)"
     echo "========================================================="
     echo ""
-    
+
     # Check if running on macOS
     if [[ "$OSTYPE" != "darwin"* ]]; then
         print_error "This script is designed specifically for macOS systems."
         exit 1
     fi
-    
-    # Step 0: Display prerequisites
-    echo "Before running this script, please ensure you have:"
-    echo "1. Generated a Zendesk API token at your Zendesk admin panel"
-    echo "2. Claude Desktop app installed on your macOS system"
-    echo "3. Administrator privileges (for some certificate operations)"
-    echo ""
-    echo "Note: This script contains all necessary certificates embedded within it."
-    echo "No external files are required."
-    echo ""
-    read -p "Press Enter to continue..."
-    echo ""
-    
+
+    # Step 0.5: Check for existing installations FIRST
+    print_step "Checking for existing Zendesk MCP installations..."
+
+    local existing_servers
+    existing_servers=$(detect_existing_installations)
+
+    if [ -n "$existing_servers" ]; then
+        # Found existing installation(s), handle them
+        handle_existing_installations "$existing_servers"
+
+        # If we're in update mode, credentials are already set
+        # If we're in new instance mode, we'll ask for new credentials below
+    else
+        print_info "No existing installations found. Proceeding with fresh installation..."
+        export UPDATE_MODE="false"
+        export NEW_INSTANCE="false"
+    fi
+
+    # Step 0: Display prerequisites (skip if updating)
+    if [ "$UPDATE_MODE" != "true" ]; then
+        echo ""
+        echo "Before running this script, please ensure you have:"
+        echo "1. Generated a Zendesk API token at your Zendesk admin panel"
+        echo "2. Claude Desktop app installed on your macOS system"
+        echo "3. Administrator privileges (for some certificate operations)"
+        echo ""
+        echo "Note: This script contains all necessary certificates embedded within it."
+        echo "No external files are required."
+        echo ""
+        read -p "Press Enter to continue..."
+        echo ""
+    fi
+
     # Step 1: Install Homebrew if needed
     print_step "Checking for Homebrew installation..."
     if command_exists brew; then
@@ -405,31 +623,52 @@ main() {
     else
         install_homebrew
     fi
-    
-    # Step 2: Get user inputs
-    print_step "Collecting Zendesk configuration..."
-    
-    ZENDESK_SUBDOMAIN=""
-    ZENDESK_EMAIL=""
-    ZENDESK_API_KEY=""
-    INSTALL_DIR=""
-    
-    get_input "Enter your Zendesk subdomain (e.g., 'pionex' for pionex.zendesk.com)" "pionex" ZENDESK_SUBDOMAIN
-    get_input "Enter your Zendesk email" "" ZENDESK_EMAIL
-    get_input "Enter your Zendesk API key" "" ZENDESK_API_KEY
-    get_input "Enter installation directory" "$DEFAULT_INSTALL_DIR" INSTALL_DIR
-    
-    echo ""
-    print_step "Configuration summary:"
-    echo "  Subdomain: $ZENDESK_SUBDOMAIN"
-    echo "  Email: $ZENDESK_EMAIL"
-    echo "  API Key: ${ZENDESK_API_KEY:0:10}..."
-    echo "  Install Directory: $INSTALL_DIR"
-    echo ""
-    read -p "Continue with installation? (y/N): " confirm
-    if [[ ! $confirm =~ ^[Yy]$ ]]; then
-        echo "Installation cancelled."
-        exit 0
+
+    # Step 2: Get user inputs (skip if updating with existing credentials)
+    if [ "$UPDATE_MODE" != "true" ]; then
+        print_step "Collecting Zendesk configuration..."
+
+        # Only prompt if not already set by update flow
+        if [ -z "$ZENDESK_SUBDOMAIN" ]; then
+            ZENDESK_SUBDOMAIN=""
+            ZENDESK_EMAIL=""
+            ZENDESK_API_KEY=""
+            INSTALL_DIR=""
+
+            get_input "Enter your Zendesk subdomain (e.g., 'pionex' for pionex.zendesk.com)" "pionex" ZENDESK_SUBDOMAIN
+            get_input "Enter your Zendesk email" "" ZENDESK_EMAIL
+            get_input "Enter your Zendesk API key" "" ZENDESK_API_KEY
+
+            # For new instance, suggest a different directory
+            if [ "$NEW_INSTANCE" == "true" ]; then
+                DEFAULT_NEW_DIR="$HOME/zendesk-mcp-server-$ZENDESK_SUBDOMAIN"
+                get_input "Enter installation directory" "$DEFAULT_NEW_DIR" INSTALL_DIR
+            else
+                get_input "Enter installation directory" "$DEFAULT_INSTALL_DIR" INSTALL_DIR
+            fi
+        fi
+
+        echo ""
+        print_step "Configuration summary:"
+        echo "  Subdomain: $ZENDESK_SUBDOMAIN"
+        echo "  Email: $ZENDESK_EMAIL"
+        echo "  API Key: ${ZENDESK_API_KEY:0:10}..."
+        echo "  Install Directory: $INSTALL_DIR"
+        if [ "$NEW_INSTANCE" == "true" ]; then
+            echo "  Mode: New instance (alongside existing)"
+        fi
+        echo ""
+        read -p "Continue with installation? (y/N): " confirm
+        if [[ ! $confirm =~ ^[Yy]$ ]]; then
+            echo "Installation cancelled."
+            exit 0
+        fi
+    else
+        echo ""
+        print_info "Update mode: Reusing existing credentials"
+        print_info "  Subdomain: $ZENDESK_SUBDOMAIN"
+        print_info "  Install Directory: $INSTALL_DIR"
+        echo ""
     fi
     
     # Step 3: Install required tools via Homebrew
@@ -522,14 +761,31 @@ EOF
     
     # Step 9: Configure Claude Desktop
     print_step "Configuring Claude Desktop..."
-    
+
     CLAUDE_CONFIG_FILE="$HOME/Library/Application Support/Claude/claude_desktop_config.json"
-    
-    # Update Claude configuration
-    update_claude_config "$CLAUDE_CONFIG_FILE" "$INSTALL_DIR" "$UV_PATH"
-    
+
+    # Determine server name based on mode
+    local SERVER_NAME
+    if [ "$UPDATE_MODE" == "true" ]; then
+        # Updating existing installation, use the same server name
+        SERVER_NAME="$UPDATE_SERVER_NAME"
+        print_info "Updating existing server: $SERVER_NAME"
+    elif [ "$NEW_INSTANCE" == "true" ]; then
+        # New instance alongside existing, use pattern: zendesk-{subdomain}
+        SERVER_NAME="zendesk-$ZENDESK_SUBDOMAIN"
+        print_info "Creating new server instance: $SERVER_NAME"
+    else
+        # Fresh installation, use default "zendesk" name
+        SERVER_NAME="zendesk"
+        print_info "Creating server: $SERVER_NAME"
+    fi
+
+    # Update Claude configuration with the determined server name
+    update_claude_config "$CLAUDE_CONFIG_FILE" "$INSTALL_DIR" "$UV_PATH" "$SERVER_NAME"
+
     print_success "Claude Desktop configuration updated"
     print_success "Configuration file location: $CLAUDE_CONFIG_FILE"
+    print_success "Server name: $SERVER_NAME"
     
     # Step 10: Run tests
     test_installation "$INSTALL_DIR" "$ZENDESK_SUBDOMAIN"
@@ -541,29 +797,46 @@ EOF
     # Step 12: Final instructions
     echo ""
     echo "========================================================="
-    echo "               Installation Complete!"
+    if [ "$UPDATE_MODE" == "true" ]; then
+        echo "               Update Complete!"
+    else
+        echo "               Installation Complete!"
+    fi
     echo "========================================================="
     echo ""
-    print_success "Zendesk MCP server has been successfully installed and configured!"
+    if [ "$UPDATE_MODE" == "true" ]; then
+        print_success "Zendesk MCP server has been successfully updated!"
+    else
+        print_success "Zendesk MCP server has been successfully installed and configured!"
+    fi
     echo ""
     echo "Next steps:"
     echo "1. 🔄 Quit and restart the Claude Desktop app"
-    echo "2. ➕ You should see 'Add from zendesk' when clicking the '+' button"
+    echo "2. ➕ You should see 'Add from $SERVER_NAME' when clicking the '+' button"
     echo "3. 🧪 Test with example prompts:"
     echo "   • 'Summarize all conversations of Zendesk ticket [TICKET_ID]'"
     echo "   • 'Draft a response for Zendesk ticket [TICKET_ID] using knowledge base articles'"
     echo ""
     echo "📁 Configuration details:"
+    echo "   MCP Server name: $SERVER_NAME"
     echo "   Installation directory: $INSTALL_DIR"
     echo "   Claude config file: $CLAUDE_CONFIG_FILE"
     echo "   Zendesk subdomain: $ZENDESK_SUBDOMAIN"
     echo "   Enterprise certificates: ✅ Installed (embedded)"
+    if [ "$UPDATE_MODE" == "true" ]; then
+        echo "   Mode: Update (credentials preserved)"
+    elif [ "$NEW_INSTANCE" == "true" ]; then
+        echo "   Mode: New instance (alongside existing)"
+    fi
     echo ""
     print_warning "🚨 IMPORTANT: Restart Claude Desktop app to activate the integration!"
     echo ""
     print_info "💡 This script is self-contained - all certificates are embedded"
     print_info "💡 If you encounter issues, check the debugging information above"
     print_info "💡 For support, provide the debugging information to your IT team"
+    if [ "$UPDATE_MODE" == "true" ]; then
+        print_info "💡 To update again, simply run this installer script"
+    fi
     echo ""
 }
 
